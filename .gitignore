@@ -1,0 +1,70 @@
+# ==========================================
+# Entornos Virtuales de Python
+# ==========================================
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# ==========================================
+# Archivos de PyInstaller (Compilación EXE)
+# ==========================================
+# Carpetas temporales y de salida de ejecutables
+build/
+dist/
+*.manifest
+*.spec
+
+# Exception: Si quieres mantener el archivo .spec en control de versiones, 
+# descomenta la siguiente línea:
+# !client.spec
+
+# ==========================================
+# Caches y Archivos Temporales de Python
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# ==========================================
+# Base de Datos Local y Multimedia
+# ==========================================
+# Archivos de base de datos SQLite local
+*.db
+*.sqlite3
+*.db-journal
+
+# Carpeta de imágenes subidas dinámicamente en el servidor local
+uploads/
+
+# Archivos de configuración local generados por el cliente (área guardada)
+user_config.json
+
+# ==========================================
+# Archivos de Entorno y Secretos
+# ==========================================
+.env
+.env.local
+.env.*.local
+
+# ==========================================
+# Configuración de IDEs y Editores
+# ==========================================
+# Visual Studio Code
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# PyCharm / IntelliJ
+.idea/
+
+# Windows
+Thumbs.db
+Desktop.ini
+ehthumbs.db
