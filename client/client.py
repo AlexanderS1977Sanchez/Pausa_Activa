@@ -18,7 +18,7 @@ event_queue = queue.Queue()
 CONFIG_FILE = "user_config.json"
 
 def obtener_o_pedir_datos_usuario():
-    """Lee la configuración local o despliega un selector para registrar nombre y área."""
+    """Lee la configuración local o despliega un selector para registrar nombre y área del equipo."""
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, "r", encoding="utf-8") as f:
@@ -99,30 +99,25 @@ class AppVentanaAlerta:
 
     def iniciar_bucle_oculto(self):
         self.root = tk.Tk()
-        self.root.withdraw()  # Inicia oculto en la bandeja / background
+        self.root.withdraw()
         self.root.after(100, self.procesar_cola_eventos)
         self.root.mainloop()
 
     def mostrar_ventana_alerta(self, data):
-        area_destino = str(data.get("area", "TODAS LAS AREAS")).strip().upper()
-        mi_area = str(AREA_USUARIO).strip().upper()
-        
-        # Validación de Área
-        if area_destino != "TODAS LAS AREAS" and area_destino != mi_area:
-            print(f" [ ALERTA IGNORADA ] La alerta es para '{area_destino}', pero este equipo está registrado como '{mi_area}'")
-            return
+        # La pausa llega a TODAS las computadoras por igual
+        area_encargada = str(data.get("area", "TODAS LAS ÁREAS")).strip().upper()
 
-        print(" [ DESPLEGANDO PANTALLA COMPLETA ]...")
+        print(f" [ DESPLEGANDO PANTALLA COMPLETA ] Pausa dirigida por: {area_encargada}")
         self.pausa_id = data.get("id")
         mensaje = data.get("mensaje", "¡Hora de la Pausa Activa!")
         color_fondo = data.get("color_fondo", "#1E1E2E")
         imagen_path = data.get("imagen_path", "")
 
-        # Limpiar widgets antiguos de la ventana
+        # Limpiar widgets antiguos
         for widget in self.root.winfo_children():
             widget.destroy()
 
-        # Configuración para forzar la ventana emergente sobre todo en Windows
+        # Forzar despliegue emergente sobre todas las ventanas en Windows
         self.root.deiconify()
         self.root.state('normal')
         self.root.title("Pausa Activa")
@@ -153,14 +148,19 @@ class AppVentanaAlerta:
         frame_central = tk.Frame(self.root, bg=color_fondo)
         frame_central.pack(expand=True)
 
-        tk.Label(frame_central, text=mensaje.upper(), font=("Helvetica", 36, "bold"), fg="#FFFFFF", bg=color_fondo).pack(pady=15)
-        tk.Label(frame_central, text=f"USUARIO: {NOMBRE_USUARIO.upper()} | ÁREA: {AREA_USUARIO.upper()}", font=("Helvetica", 20, "bold"), fg="#FFD166", bg=color_fondo).pack(pady=10)
+        tk.Label(frame_central, text=mensaje.upper(), font=("Helvetica", 36, "bold"), fg="#FFFFFF", bg=color_fondo).pack(pady=10)
+        
+        # Muestra en grande qué área lidera la actividad
+        tk.Label(frame_central, text=f"ÁREA ENCARGADA DE LA PAUSA: {area_encargada}", font=("Helvetica", 22, "bold"), fg="#FFD166", bg=color_fondo).pack(pady=10)
+        
+        # Muestra la información del equipo local
+        tk.Label(frame_central, text=f"Equipo: {NOMBRE_USUARIO.upper()} ({AREA_USUARIO.upper()})", font=("Helvetica", 14), fg="#E0E0E0", bg=color_fondo).pack(pady=5)
 
         frame_inst = tk.Frame(self.root, bg="#111118", padx=30, pady=20)
         frame_inst.pack(side="bottom", fill="x", pady=40)
         tk.Label(frame_inst, text="Presiona [ ENTER ] para unirte   |   Presiona [ ESC ] si estás ocupado", font=("Helvetica", 18, "bold"), fg="#FFFFFF", bg="#111118").pack()
 
-        # Bindings de teclas
+        # Bindings de teclado
         self.root.bind("<Return>", self.evento_unirse)
         self.root.bind("<KP_Enter>", self.evento_unirse)
         self.root.bind("<Escape>", self.evento_ocupado)
@@ -216,7 +216,6 @@ app_gui = AppVentanaAlerta()
 
 @sio.event
 def alerta_pausa(data):
-    # Pasar el evento a la cola para que lo procese la GUI en su hilo principal
     event_queue.put(("alerta_pausa", data))
 
 def conectar_socket():
