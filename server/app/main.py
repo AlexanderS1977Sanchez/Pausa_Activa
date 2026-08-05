@@ -16,7 +16,10 @@ from app.scheduler import verificar_y_emitir_pausas
 # Configuración del servidor Socket.io
 sio = socketio.AsyncServer(async_mode='asgi', cors_allowed_origins='*')
 
-# Manejador moderno de eventos (Lifespan)
+# Scheduler global
+scheduler = AsyncIOScheduler()
+
+# Manejador de eventos (Lifespan)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     scheduler.add_job(verificar_y_emitir_pausas, 'interval', seconds=5, args=[sio])
@@ -41,7 +44,6 @@ fastapi_app.add_middleware(
 )
 
 app = socketio.ASGIApp(sio, fastapi_app)
-scheduler = AsyncIOScheduler()
 
 init_db()
 
@@ -142,11 +144,19 @@ async def eliminar_area(area_id: int):
     conn.close()
     return {"status": "ok", "mensaje": "Área eliminada"}
 
-# --- RUTAS REST DE PAUSAS ---
+# --- RUTAS REST DE PAUSAS (CRUD COMPLETO) ---
+
+@fastapi_app.get("/api/pausas")
+async def listar_pausas():
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM pausas_activas ORDER BY id DESC")
+    rows = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return rows
 
 @fastapi_app.post("/api/pausas")
 async def crear_pausa(pausa: PausaCreate):
-    # Formatear la hora asegurando formato HH:MM de dos dígitos
     try:
         hora_dt = datetime.strptime(pausa.hora.strip(), "%H:%M")
         hora_formateada = hora_dt.strftime("%H:%M")
@@ -175,14 +185,56 @@ async def crear_pausa(pausa: PausaCreate):
     conn.close()
     return {"status": "ok", "pausa_id": pausa_id, "mensaje": "Pausa programada exitosamente"}
 
-@fastapi_app.get("/api/pausas")
-async def listar_pausas():
+@fastapi_app.put("/api/pausas/{pausa_id}")
+async def actualizar_pausa(pausa_id: int, pausa: PausaCreate):
+    try:
+        hora_dt = datetime.strptime(pausa.hora.strip(), "%H:%M")
+        hora_formateada = hora_dt.strftime("%H:%M")
+    except ValueError:
+        hora_formateada = pausa.hora.strip()
+
+    fecha_hora = f"{pausa.fecha.strip()} {hora_formateada}"
+
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM pausas_activas ORDER BY id DESC")
-    rows = [dict(row) for row in cursor.fetchall()]
+
+    cursor.execute("SELECT * FROM pausas_activas WHERE id = ?", (pausa_id,))
+    if not cursor.fetchone():
+        conn.close()
+        raise HTTPException(status_code=404, detail="La pausa especificada no existe.")
+
+    img_path = ""
+    cursor.execute("SELECT imagen_path FROM areas WHERE nombre = ?", (pausa.area_nombre,))
+    area_row = cursor.fetchone()
+    if area_row and area_row["imagen_path"]:
+        img_path = area_row["imagen_path"]
+
+    # Al actualizar la pausa se reinicia el estado completada a 0
+    cursor.execute(
+        """
+        UPDATE pausas_activas 
+        SET fecha_hora = ?, area_nombre = ?, mensaje = ?, color_fondo = ?, imagen_path = ?, completada = 0
+        WHERE id = ?
+        """,
+        (fecha_hora, pausa.area_nombre, pausa.mensaje, pausa.color_fondo, img_path, pausa_id)
+    )
+    conn.commit()
     conn.close()
-    return rows
+    return {"status": "ok", "mensaje": "Pausa modificada correctamente"}
+
+@fastapi_app.delete("/api/pausas/{pausa_id}")
+async def eliminar_pausa(pausa_id: int):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM pausas_activas WHERE id = ?", (pausa_id,))
+    if not cursor.fetchone():
+        conn.close()
+        raise HTTPException(status_code=404, detail="La pausa especificada no existe.")
+
+    cursor.execute("DELETE FROM pausas_activas WHERE id = ?", (pausa_id,))
+    conn.commit()
+    conn.close()
+    return {"status": "ok", "mensaje": "Pausa eliminada correctamente"}
 
 if __name__ == "__main__":
     uvicorn.run("app.main:app", host="0.0.0.0", port=5000, reload=True)
