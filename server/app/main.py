@@ -2,6 +2,8 @@ import os
 import shutil
 import socketio
 import uvicorn
+from datetime import datetime
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,7 +15,16 @@ from app.scheduler import verificar_y_emitir_pausas
 
 # Configuración del servidor Socket.io
 sio = socketio.AsyncServer(async_mode='asgi', cors_allowed_origins='*')
-fastapi_app = FastAPI(title="Servidor Local de Pausas Activas")
+
+# Manejador moderno de eventos (Lifespan)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    scheduler.add_job(verificar_y_emitir_pausas, 'interval', seconds=5, args=[sio])
+    scheduler.start()
+    yield
+    scheduler.shutdown()
+
+fastapi_app = FastAPI(title="Servidor Local de Pausas Activas", lifespan=lifespan)
 
 # Crear carpeta para almacenamiento de imágenes
 UPLOADS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "uploads")
@@ -54,14 +65,18 @@ async def respuesta_usuario(sid, data):
     if not usuario or not estado or not pausa_id:
         return
 
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "INSERT INTO respuestas (pausa_id, usuario_pc, area_usuario, estado) VALUES (?, ?, ?, ?)",
-        (pausa_id, usuario, area_usuario, estado)
-    )
-    conn.commit()
-    conn.close()
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO respuestas (pausa_id, usuario_pc, area_usuario, estado) VALUES (?, ?, ?, ?)",
+            (pausa_id, usuario, area_usuario, estado)
+        )
+        conn.commit()
+        conn.close()
+        print(f" [ RESPUESTA REGISTRADA ] Pausa #{pausa_id} | Usuario: {usuario} | Estado: {estado}")
+    except Exception as e:
+        print(f" Error guardando respuesta: {e}")
 
 # --- RUTAS REST DE ÁREAS (CRUD) ---
 
@@ -131,7 +146,14 @@ async def eliminar_area(area_id: int):
 
 @fastapi_app.post("/api/pausas")
 async def crear_pausa(pausa: PausaCreate):
-    fecha_hora = f"{pausa.fecha} {pausa.hora}"
+    # Formatear la hora asegurando formato HH:MM de dos dígitos
+    try:
+        hora_dt = datetime.strptime(pausa.hora.strip(), "%H:%M")
+        hora_formateada = hora_dt.strftime("%H:%M")
+    except ValueError:
+        hora_formateada = pausa.hora.strip()
+
+    fecha_hora = f"{pausa.fecha.strip()} {hora_formateada}"
     
     img_path = ""
     conn = get_connection()
@@ -161,11 +183,6 @@ async def listar_pausas():
     rows = [dict(row) for row in cursor.fetchall()]
     conn.close()
     return rows
-
-@fastapi_app.on_event("startup")
-async def startup_event():
-    scheduler.add_job(verificar_y_emitir_pausas, 'interval', seconds=15, args=[sio])
-    scheduler.start()
 
 if __name__ == "__main__":
     uvicorn.run("app.main:app", host="0.0.0.0", port=5000, reload=True)
