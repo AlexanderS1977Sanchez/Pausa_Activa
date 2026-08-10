@@ -1,13 +1,12 @@
 import os
 import getpass
 
-# DIRECCIÓN IP Y PUERTO DEL SERVIDOR LOCAL
-SERVER_IP = "192.168.5.74"
+# IP Servidor en Red Local (Ajusta con la IP real de tu servidor)
+SERVER_IP = "192.168.100.219"
 SERVER_PORT = 5000
-
 SERVER_URL = f"http://{SERVER_IP}:{SERVER_PORT}"
 
-# Obtiene automáticamente el nombre del usuario de la computadora
+# Obtención segura del nombre de usuario de la PC cliente
 try:
     NOMBRE_USUARIO_PC = os.getlogin()
 except Exception:

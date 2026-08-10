@@ -1,232 +1,195 @@
 import os
 import sys
+
+# Agregar la raíz al sys.path para importar config
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import json
-import requests
-import queue
+import time
 import threading
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk
+import requests
 import socketio
-import pygame
-from PIL import Image, ImageTk
 
-from config import SERVER_URL
+from config import SERVER_URL, NOMBRE_USUARIO_PC
 
-pygame.mixer.init()
-sio = socketio.Client()
-event_queue = queue.Queue()
-CONFIG_FILE = "user_config.json"
+APPDATA_DIR = os.path.join(os.getenv('APPDATA') or os.path.expanduser('~'), 'PausasActivasApp')
+os.makedirs(APPDATA_DIR, exist_ok=True)
+CONFIG_FILE = os.path.join(APPDATA_DIR, 'user_config.json')
 
-def obtener_o_pedir_datos_usuario():
-    """Lee la configuración local o despliega un selector para registrar nombre y área del equipo."""
+# Inicializar Socket.IO cliente con reconexión automática robusta
+sio = socketio.Client(reconnection=True, reconnection_attempts=0, reconnection_delay=5)
+
+def cargar_config():
     if os.path.exists(CONFIG_FILE):
         try:
-            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if "area" in data and "usuario" in data:
-                    return data["usuario"], data["area"]
+            with open(CONFIG_FILE, 'r') as f:
+                return json.load(f)
         except Exception:
             pass
+    return {"area_id": None, "area_nombre": "Sin Seleccionar"}
 
-    areas = ["Sistemas", "Contabilidad", "Recursos Humanos", "Ventas", "Marketing", "Administración"]
-    try:
-        r = requests.get(f"{SERVER_URL}/api/areas", timeout=3)
-        if r.status_code == 200:
-            areas = [a["nombre"] for a in r.json()]
-    except Exception:
-        pass
+def guardar_config(area_id, area_nombre):
+    with open(CONFIG_FILE, 'w') as f:
+        json.dump({"area_id": area_id, "area_nombre": area_nombre}, f)
 
-    win = tk.Tk()
-    win.title("Registro del Equipo")
-    win.geometry("380x260")
-    win.configure(bg="#1E1E2E")
-    win.resizable(False, False)
-    win.eval('tk::PlaceWindow . center')
 
-    tk.Label(win, text="Registro de Equipo / Cliente", font=("Helvetica", 12, "bold"), fg="#FFD166", bg="#1E1E2E").pack(pady=10)
+class VentanaConfigInicial(tk.Toplevel):
+    def __init__(self, parent, on_save_callback):
+        super().__init__(parent)
+        self.title("Configuración de Área")
+        self.geometry("380x220")
+        self.configure(bg="#0F172A")
+        self.resizable(False, False)
+        self.on_save_callback = on_save_callback
 
-    tk.Label(win, text="Nombre del Usuario / Equipo:", font=("Helvetica", 10), fg="white", bg="#1E1E2E").pack(anchor="w", padx=35, pady=(5, 2))
-    entry_usuario = tk.Entry(win, font=("Helvetica", 10), width=30)
-    entry_usuario.pack(padx=35, pady=(0, 10))
+        tk.Label(self, text="SELECCIÓN DE ÁREA DE TRABAJO", font=("Segoe UI", 11, "bold"), bg="#0F172A", fg="#38BDF8").pack(pady=(15, 5))
+        tk.Label(self, text=f"Equipo: {NOMBRE_USUARIO_PC}", font=("Segoe UI", 9), bg="#0F172A", fg="#94A3B8").pack(pady=(0, 15))
 
-    tk.Label(win, text="Selecciona tu Área:", font=("Helvetica", 10), fg="white", bg="#1E1E2E").pack(anchor="w", padx=35, pady=(5, 2))
-    combo = ttk.Combobox(win, values=areas, state="readonly", font=("Helvetica", 10), width=28)
-    if areas:
-        combo.current(0)
-    combo.pack(padx=35, pady=(0, 15))
+        self.combo = ttk.Combobox(self, state="readonly", font=("Segoe UI", 10))
+        self.combo.pack(fill="x", padx=30, pady=5)
 
-    resultado = {}
+        btn = tk.Button(self, text="Guardar y Continuar", font=("Segoe UI", 10, "bold"), bg="#10B981", fg="white", bd=0, cursor="hand2", command=self.guardar)
+        btn.pack(fill="x", padx=30, pady=15, ipady=5)
 
-    def guardar():
-        usr = entry_usuario.get().strip()
-        area_sel = combo.get().strip()
-        if not usr:
-            messagebox.showwarning("Atención", "Ingresa tu nombre para continuar.", parent=win)
-            return
-        resultado["usuario"] = usr
-        resultado["area"] = area_sel
-        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump({"usuario": usr, "area": area_sel}, f, indent=4)
-        win.destroy()
+        self.areas_data = {}
+        self.obtener_areas()
 
-    btn = tk.Button(win, text="Guardar Registro", command=guardar, bg="#43B581", fg="white", font=("Helvetica", 10, "bold"), cursor="hand2")
-    btn.pack(pady=5)
-    win.mainloop()
-
-    return resultado.get("usuario", "Usuario_PC"), resultado.get("area", areas[0] if areas else "General")
-
-NOMBRE_USUARIO, AREA_USUARIO = obtener_o_pedir_datos_usuario()
-print(f" [ CLIENTE INICIADO ] Usuario: {NOMBRE_USUARIO} | Área Registrada: {AREA_USUARIO}")
-
-class AppVentanaAlerta:
-    def __init__(self):
-        self.root = None
-        self.pausa_id = None
-        self.bg_image_tk = None
-
-    def procesar_cola_eventos(self):
+    def obtener_areas(self):
         try:
-            while not event_queue.empty():
-                evento, data = event_queue.get_nowait()
-                if evento == "alerta_pausa":
-                    print(f" [ EVENTO RECIBIDO EN CLIENTE ] Datos: {data}")
-                    self.mostrar_ventana_alerta(data)
+            res = requests.get(f"{SERVER_URL}/api/areas", timeout=3)
+            if res.status_code == 200:
+                areas = res.json()
+                self.areas_data = {a["nombre"]: a["id"] for a in areas}
+                self.combo["values"] = list(self.areas_data.keys())
+                if areas:
+                    self.combo.current(0)
         except Exception as e:
-            print(f" Error procesando evento en GUI: {e}")
+            print(f"Error conectando al servidor: {e}")
+
+    def guardar(self):
+        nom = self.combo.get()
+        a_id = self.areas_data.get(nom)
+        if a_id:
+            guardar_config(a_id, nom)
+            if sio.connected:
+                sio.emit("registrar_cliente", {"usuario_pc": NOMBRE_USUARIO_PC, "area_id": a_id})
+            self.on_save_callback()
+            self.destroy()
+
+
+class VentanaAlertaPausa:
+    def __init__(self, root_app, data):
+        self.root_app = root_app
+        self.data = data
         
-        if self.root:
-            self.root.after(100, self.procesar_cola_eventos)
-
-    def iniciar_bucle_oculto(self):
-        self.root = tk.Tk()
-        self.root.withdraw()
-        self.root.after(100, self.procesar_cola_eventos)
-        self.root.mainloop()
-
-    def mostrar_ventana_alerta(self, data):
-        # La pausa llega a TODAS las computadoras por igual
-        area_encargada = str(data.get("area", "TODAS LAS ÁREAS")).strip().upper()
-
-        print(f" [ DESPLEGANDO PANTALLA COMPLETA ] Pausa dirigida por: {area_encargada}")
-        self.pausa_id = data.get("id")
-        mensaje = data.get("mensaje", "¡Hora de la Pausa Activa!")
-        color_fondo = data.get("color_fondo", "#1E1E2E")
-        imagen_path = data.get("imagen_path", "")
-
-        # Limpiar widgets antiguos
-        for widget in self.root.winfo_children():
-            widget.destroy()
-
-        # Forzar despliegue emergente sobre todas las ventanas en Windows
-        self.root.deiconify()
-        self.root.state('normal')
+        # Crear la ventana de alerta como Toplevel dependiente de la app principal
+        self.root = tk.Toplevel(self.root_app)
         self.root.title("Pausa Activa")
         self.root.attributes("-fullscreen", True)
         self.root.attributes("-topmost", True)
+
+        color_fondo = self.data.get("color_fondo") or "#0F172A"
+        self.root.config(bg=color_fondo)
+
+        # Forzar el foco absoluto para que pase al frente de cualquier otra app (ej: juegos, navegador)
+        self.root.deiconify()
         self.root.lift()
         self.root.focus_force()
-        self.root.configure(bg=color_fondo)
+        self.root.grab_set()
 
-        self.reproducir_sonido_alerta()
+        # Atajos de Teclado Solicitados
+        self.root.bind("<Return>", lambda e: self.responder("completado"))
+        self.root.bind("<Escape>", lambda e: self.responder("ocupado"))
 
-        # Cargar imagen de fondo si aplica
-        if imagen_path:
-            try:
-                full_url = f"{SERVER_URL}{imagen_path}" if imagen_path.startswith("/") else f"{SERVER_URL}/{imagen_path}"
-                img_data = requests.get(full_url, timeout=3).content
-                from io import BytesIO
-                img = Image.open(BytesIO(img_data))
-                sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
-                img = img.resize((sw, sh), Image.Resampling.LANCZOS)
-                self.bg_image_tk = ImageTk.PhotoImage(img)
+        self.construir_ui()
 
-                label_bg = tk.Label(self.root, image=self.bg_image_tk)
-                label_bg.place(x=0, y=0, relwidth=1, relheight=1)
-            except Exception as e:
-                print(f" No se pudo cargar la imagen de fondo: {e}")
+    def construir_ui(self):
+        cfg = cargar_config()
+        nombre_persona = self.data.get("nombre_persona") or NOMBRE_USUARIO_PC
+        nombre_area = cfg.get("area_nombre") or self.data.get("nombre_area") or "Área General"
 
-        frame_central = tk.Frame(self.root, bg=color_fondo)
-        frame_central.pack(expand=True)
+        card = tk.Frame(self.root, bg="#1E293B", padx=60, pady=50)
+        card.place(relx=0.5, rely=0.5, anchor="center")
 
-        tk.Label(frame_central, text=mensaje.upper(), font=("Helvetica", 36, "bold"), fg="#FFFFFF", bg=color_fondo).pack(pady=10)
-        
-        # Muestra en grande qué área lidera la actividad
-        tk.Label(frame_central, text=f"ÁREA ENCARGADA DE LA PAUSA: {area_encargada}", font=("Helvetica", 22, "bold"), fg="#FFD166", bg=color_fondo).pack(pady=10)
-        
-        # Muestra la información del equipo local
-        tk.Label(frame_central, text=f"Equipo: {NOMBRE_USUARIO.upper()} ({AREA_USUARIO.upper()})", font=("Helvetica", 14), fg="#E0E0E0", bg=color_fondo).pack(pady=5)
+        tk.Label(card, text=f"¡Hola, {nombre_persona}!", font=("Segoe UI", 26, "bold"), fg="#38BDF8", bg="#1E293B").pack(pady=(0, 2))
+        tk.Label(card, text=f"Área: {nombre_area}", font=("Segoe UI", 12), fg="#94A3B8", bg="#1E293B").pack(pady=(0, 15))
 
-        frame_inst = tk.Frame(self.root, bg="#111118", padx=30, pady=20)
-        frame_inst.pack(side="bottom", fill="x", pady=40)
-        tk.Label(frame_inst, text="Presiona [ ENTER ] para unirte   |   Presiona [ ESC ] si estás ocupado", font=("Helvetica", 18, "bold"), fg="#FFFFFF", bg="#111118").pack()
+        tk.Label(card, text="ES HORA DE TU PAUSA ACTIVA", font=("Segoe UI", 16, "bold"), fg="#F8FAFC", bg="#1E293B").pack(pady=(0, 10))
 
-        # Bindings de teclado
-        self.root.bind("<Return>", self.evento_unirse)
-        self.root.bind("<KP_Enter>", self.evento_unirse)
-        self.root.bind("<Escape>", self.evento_ocupado)
+        mensaje_texto = self.data.get("mensaje", "")
+        if mensaje_texto:
+            tk.Label(card, text=mensaje_texto, font=("Segoe UI", 13), fg="#CBD5E1", bg="#1E293B", wraplength=550, justify="center").pack(pady=(0, 25))
 
-    def reproducir_sonido_alerta(self):
-        base_dir = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
-        ruta_audio = os.path.join(base_dir, "assets", "alerta.mp3")
-        if os.path.exists(ruta_audio):
-            try:
-                pygame.mixer.music.load(ruta_audio)
-                pygame.mixer.music.play(-1)
-            except Exception:
-                pass
+        f_btn = tk.Frame(card, bg="#1E293B")
+        f_btn.pack(fill="x")
 
-    def detener_audio_y_ocultar(self):
+        btn_si = tk.Button(f_btn, text="[ENTER] Asistiré", font=("Segoe UI", 11, "bold"), bg="#10B981", fg="white", bd=0, padx=20, pady=8, cursor="hand2", command=lambda: self.responder("completado"))
+        btn_si.pack(side="left", expand=True, padx=5)
+
+        btn_no = tk.Button(f_btn, text="[ESC] Estoy Ocupado", font=("Segoe UI", 11, "bold"), bg="#EF4444", fg="white", bd=0, padx=20, pady=8, cursor="hand2", command=lambda: self.responder("ocupado"))
+        btn_no.pack(side="right", expand=True, padx=5)
+
+    def responder(self, estado):
+        if sio.connected:
+            cfg = cargar_config()
+            sio.emit("confirmacion_pausa", {
+                "pausa_id": self.data.get("id"),
+                "usuario_pc": NOMBRE_USUARIO_PC,
+                "area_id": cfg.get("area_id"),
+                "estado": estado
+            })
         try:
-            pygame.mixer.music.stop()
+            self.root.grab_release()
+            self.root.destroy()
         except Exception:
             pass
-        if self.root:
-            for widget in self.root.winfo_children():
-                widget.destroy()
-            self.root.attributes("-topmost", False)
-            self.root.withdraw()
 
-    def evento_unirse(self, event=None):
-        try:
-            sio.emit("respuesta_usuario", {
-                "usuario": NOMBRE_USUARIO,
-                "area_usuario": AREA_USUARIO,
-                "estado": "UNIDO",
-                "pausa_id": self.pausa_id
+
+class ClienteApp:
+    def __init__(self):
+        self.root = tk.Tk()
+        self.root.withdraw() # Ocultar la ventana principal del cliente en segundo plano
+
+        # Registrar los eventos de socket.io asegurando comunicación directa con el hilo de tkinter mediante root.after
+        @sio.event
+        def connect():
+            print(" [ Conectado al Servidor ]")
+            cfg = cargar_config()
+            sio.emit("registrar_cliente", {
+                "usuario_pc": NOMBRE_USUARIO_PC,
+                "area_id": cfg.get("area_id")
             })
-            print(" [ RESPUESTA ENVIADA ] Estado: UNIDO")
-        except Exception as e:
-            print(f" Error emitiendo respuesta: {e}")
-        self.detener_audio_y_ocultar()
 
-    def evento_ocupado(self, event=None):
-        try:
-            sio.emit("respuesta_usuario", {
-                "usuario": NOMBRE_USUARIO,
-                "area_usuario": AREA_USUARIO,
-                "estado": "OCUPADO",
-                "pausa_id": self.pausa_id
-            })
-            print(" [ RESPUESTA ENVIADA ] Estado: OCUPADO")
-        except Exception as e:
-            print(f" Error emitiendo respuesta: {e}")
-        self.detener_audio_y_ocultar()
+        @sio.event
+        def disconnect():
+            print(" [ Desconectado del Servidor ]")
 
-app_gui = AppVentanaAlerta()
+        @sio.event
+        def alerta_pausa(data):
+            # Ejecutar la creación de la ventana directamente en el hilo principal de Tkinter de forma segura
+            self.root.after(0, lambda: VentanaAlertaPausa(self.root, data))
 
-@sio.event
-def alerta_pausa(data):
-    event_queue.put(("alerta_pausa", data))
+        # Iniciar hilo de conexión al servidor en background
+        threading.Thread(target=self.conectar_servidor_loop, daemon=True).start()
 
-def conectar_socket():
-    try:
-        sio.connect(SERVER_URL)
-        print(" [ SOCKET.IO ] Conectado exitosamente al servidor.")
-        sio.wait()
-    except Exception as e:
-        print(f" Error de conexión Socket.IO: {e}")
+        cfg = cargar_config()
+        if not cfg.get("area_id"):
+            VentanaConfigInicial(self.root, lambda: None)
+
+    def conectar_servidor_loop(self):
+        while True:
+            try:
+                if not sio.connected:
+                    sio.connect(SERVER_URL, wait_timeout=10)
+                sio.sleep(5)
+            except Exception:
+                time.sleep(5)
+
+    def run(self):
+        self.root.mainloop()
 
 if __name__ == "__main__":
-    socket_thread = threading.Thread(target=conectar_socket, daemon=True)
-    socket_thread.start()
-    app_gui.iniciar_bucle_oculto()
+    app = ClienteApp()
+    app.run()
