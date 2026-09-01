@@ -27,4 +27,4 @@ class PausaResponse(PausaBase):
 class RespuestaCreate(BaseModel):
     pausa_id: int
     usuario: str
-    estado: str         # "UNIDO" u "OCUPADO"
+    estado: str         
