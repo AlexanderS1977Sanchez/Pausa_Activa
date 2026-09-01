@@ -153,7 +153,21 @@ async def listar_pausas():
     cursor.execute("SELECT * FROM pausas_activas ORDER BY id DESC")
     rows = [dict(row) for row in cursor.fetchall()]
     conn.close()
-    return rows
+    
+    pausas_formateadas = []
+    for p in rows:
+        fh = p.get("fecha_hora", "")
+        partes = fh.strip().split(" ")
+        
+        fecha_val = partes[0] if len(partes) > 0 else ""
+        hora_val = partes[1] if len(partes) > 1 else "--:--"
+        
+        p["fecha"] = fecha_val
+        p["hora"] = hora_val
+        p["hora_inicio"] = hora_val
+        pausas_formateadas.append(p)
+
+    return pausas_formateadas
 
 @fastapi_app.post("/api/pausas")
 async def crear_pausa(pausa: PausaCreate):
@@ -209,7 +223,6 @@ async def actualizar_pausa(pausa_id: int, pausa: PausaCreate):
     if area_row and area_row["imagen_path"]:
         img_path = area_row["imagen_path"]
 
-    # Al actualizar la pausa se reinicia el estado completada a 0
     cursor.execute(
         """
         UPDATE pausas_activas 
@@ -222,6 +235,21 @@ async def actualizar_pausa(pausa_id: int, pausa: PausaCreate):
     conn.close()
     return {"status": "ok", "mensaje": "Pausa modificada correctamente"}
 
+# ---> ENDPOINT PARA ELIMINACIÓN MASIVA EN ORDEN CORRECTO (FKs) <---
+@fastapi_app.delete("/api/pausas/todas/eliminar")
+async def eliminar_todas_las_pausas():
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("DELETE FROM respuestas")
+        cursor.execute("DELETE FROM pausas_activas")
+        conn.commit()
+        conn.close()
+        return {"status": "ok", "mensaje": "Todas las pausas y respuestas fueron eliminadas correctamente"}
+    except Exception as e:
+        conn.close()
+        raise HTTPException(status_code=500, detail=f"Error al eliminar la base de datos: {str(e)}")
+
 @fastapi_app.delete("/api/pausas/{pausa_id}")
 async def eliminar_pausa(pausa_id: int):
     conn = get_connection()
@@ -231,10 +259,12 @@ async def eliminar_pausa(pausa_id: int):
         conn.close()
         raise HTTPException(status_code=404, detail="La pausa especificada no existe.")
 
+    cursor.execute("DELETE FROM respuestas WHERE pausa_id = ?", (pausa_id,))
     cursor.execute("DELETE FROM pausas_activas WHERE id = ?", (pausa_id,))
     conn.commit()
     conn.close()
     return {"status": "ok", "mensaje": "Pausa eliminada correctamente"}
 
 if __name__ == "__main__":
-    uvicorn.run("app.main:app", host="0.0.0.0", port=5000, reload=True)
+    # Se pasa el objeto app directamente para evitar errores con reload cuando envuelves la app en Socket.IO ASGIApp
+    uvicorn.run(app, host="0.0.0.0", port=5000)

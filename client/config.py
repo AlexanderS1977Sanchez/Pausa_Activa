@@ -2,7 +2,7 @@ import os
 import getpass
 
 # IP Servidor en Red Local (Ajusta con la IP real de tu servidor)
-SERVER_IP = "192.168.100.219"
+SERVER_IP = "192.168.5.74"
 SERVER_PORT = 5000
 SERVER_URL = f"http://{SERVER_IP}:{SERVER_PORT}"
 
